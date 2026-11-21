@@ -326,9 +326,24 @@ def load_from_google_sheet(user_email):
 import os
 from google_auth_oauthlib.flow import Flow
 
+SCOPES = [
+    "openid",
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/userinfo.profile",
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive.file",
+]
 
-def get_user_drive_credentials(redirect_uri="http://localhost:8501"):
+def get_user_drive_credentials(redirect_uri=None):
   """Returns authorized Google Credentials for the current user, or renders a connect link."""
+  if redirect_uri is None:
+    auth_cfg = st.secrets.get("auth", {})
+    configured_uri = auth_cfg.get("redirect_uri")
+    if configured_uri:
+      redirect_uri = configured_uri.replace("/oauth2callback", "")
+    else:
+      redirect_uri = "https://wealthmanager.streamlit.app"
+
   if "gdrive_creds" in st.session_state:
     creds = st.session_state["gdrive_creds"]
     if getattr(creds, "expired", False) and getattr(
@@ -487,39 +502,39 @@ else:
 # ==========================================
 all_dfs = []
 
-if (
-    "loaded_sheet_df" in st.session_state
-    and not cas_file
-    and not broker_files
-):
-    all_dfs.append(st.session_state["loaded_sheet_df"])
+if "loaded_sheet_df" in st.session_state:
+  sheet_df = st.session_state["loaded_sheet_df"].copy()
+  for col in ["Units", "Price (INR)", "Cost Value (INR)", "Market Value (INR)"]:
+    if col in sheet_df.columns:
+      sheet_df[col] = sheet_df[col].apply(lambda x: clean_num(str(x)))
+  all_dfs.append(sheet_df)
 
 if cas_file:
-    df_cas = parse_cas_pdf(cas_file)
-    if not df_cas.empty:
-        all_dfs.append(df_cas)
+  df_cas = parse_cas_pdf(cas_file)
+  if not df_cas.empty:
+    all_dfs.append(df_cas)
 
 if broker_files:
-    for b_file in broker_files:
-        df_b = parse_generic_broker_file(
-            b_file, currency=broker_curr, fx_rate=broker_fx
-        )
-        if not df_b.empty:
-            all_dfs.append(df_b)
+  for b_file in broker_files:
+    df_b = parse_generic_broker_file(
+        b_file, currency=broker_curr, fx_rate=broker_fx
+    )
+    if not df_b.empty:
+      all_dfs.append(df_b)
 
 if manual_val > 0:
-    all_dfs.append(
-        pd.DataFrame([{
-            "Source": "Manual Entry",
-            "Scrip": manual_name if manual_name else "Manual Asset",
-            "Currency": "INR",
-            "Units": 1.0,
-            "Price (INR)": manual_val,
-            "Cost Value (INR)": manual_cost if manual_cost > 0 else manual_val,
-            "Market Value (INR)": manual_val,
-            "Asset Class": manual_class,
-        }])
-    )
+  all_dfs.append(
+      pd.DataFrame([{
+          "Source": "Manual Entry",
+          "Scrip": manual_name if manual_name else "Manual Asset",
+          "Currency": "INR",
+          "Units": 1.0,
+          "Price (INR)": manual_val,
+          "Cost Value (INR)": manual_cost if manual_cost > 0 else manual_val,
+          "Market Value (INR)": manual_val,
+          "Asset Class": manual_class,
+      }])
+  )
 
 if all_dfs:
   raw_df = pd.concat(all_dfs, ignore_index=True)
@@ -529,10 +544,6 @@ if all_dfs:
     st.caption(f"ℹ️ Skipped {dupes} duplicate holding entry/entries.")
 else:
   master_df = pd.DataFrame()
-
-master_df = (
-    pd.concat(all_dfs, ignore_index=True) if all_dfs else pd.DataFrame()
-)
 
 if master_df.empty:
     st.info(
